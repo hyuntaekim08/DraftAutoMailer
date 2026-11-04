@@ -38,7 +38,7 @@ class DraftMailerWindow:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Outlook Draft Mailer")
-        self.root.geometry("1040x820")
+        self.root.geometry("1200x960")
         self.input_path = tk.StringVar()
         self.recipient_column = tk.StringVar()
         self.contacts: list[dict[str, str]] = []
@@ -62,9 +62,9 @@ class DraftMailerWindow:
         main = ttk.Frame(self.root, padding=16)
         main.pack(fill="both", expand=True)
         main.columnconfigure(0, weight=1)
-        main.rowconfigure(4, weight=2)
+        main.rowconfigure(4, weight=4, minsize=300)
         main.rowconfigure(9, weight=1)
-        main.rowconfigure(12, weight=1)
+        main.rowconfigure(11, weight=1)
 
         ttk.Label(
             main,
@@ -107,7 +107,12 @@ class DraftMailerWindow:
         table_frame.grid(row=4, column=0, sticky="nsew", pady=(4, 8))
         table_frame.rowconfigure(0, weight=1)
         table_frame.columnconfigure(0, weight=1)
-        self.contact_table = ttk.Treeview(table_frame, show="headings", selectmode="browse")
+        self.contact_table = ttk.Treeview(
+            table_frame,
+            show="headings",
+            selectmode="browse",
+            height=16,
+        )
         self.contact_table.grid(row=0, column=0, sticky="nsew")
         self.contact_table.bind("<Button-1>", self._toggle_row)
         vertical_scrollbar = ttk.Scrollbar(
