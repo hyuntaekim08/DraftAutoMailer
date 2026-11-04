@@ -46,6 +46,7 @@ class DraftMailerWindow:
         self.checked_rows: set[int] = set()
         self.active_editor: ttk.Entry | tk.Text | None = None
         self.outlook_signature: OutlookSignature | None = None
+        self.log_visible = False
 
         self._build_window()
         if getattr(sys, "frozen", False):
@@ -64,7 +65,7 @@ class DraftMailerWindow:
         main.columnconfigure(0, weight=1)
         main.rowconfigure(4, weight=4, minsize=300)
         main.rowconfigure(9, weight=1)
-        main.rowconfigure(11, weight=1)
+        main.rowconfigure(11, weight=0)
 
         ttk.Label(
             main,
@@ -183,6 +184,12 @@ class DraftMailerWindow:
         action_row.grid(row=10, column=0, sticky="ew", pady=(12, 0))
         self.status_label = ttk.Label(action_row, text="Choose a contact file to begin.")
         self.status_label.pack(side="left", fill="x", expand=True)
+        self.log_toggle_button = ttk.Button(
+            action_row,
+            text="Show log",
+            command=self._toggle_log_panel,
+        )
+        self.log_toggle_button.pack(side="right", padx=(8, 0))
         ttk.Button(action_row, text="Preview first email", command=self._preview).pack(
             side="right", padx=(8, 0)
         )
@@ -191,6 +198,7 @@ class DraftMailerWindow:
         )
 
         log_frame = ttk.LabelFrame(main, text="Activity log", padding=8)
+        self.log_frame = log_frame
         log_frame.grid(row=11, column=0, sticky="nsew", pady=(12, 0))
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
@@ -206,6 +214,18 @@ class DraftMailerWindow:
             text="Clear display",
             command=self._clear_log_display,
         ).grid(row=1, column=0, sticky="e", pady=(6, 0))
+        log_frame.grid_remove()
+
+    def _toggle_log_panel(self) -> None:
+        self.log_visible = not self.log_visible
+        if self.log_visible:
+            self.log_frame.grid()
+            self.log_toggle_button.config(text="Hide log")
+            self.log_frame.master.rowconfigure(11, weight=1)
+        else:
+            self.log_frame.grid_remove()
+            self.log_toggle_button.config(text="Show log")
+            self.log_frame.master.rowconfigure(11, weight=0)
 
     def _clear_log_display(self) -> None:
         self.log_text.configure(state="normal")
