@@ -39,7 +39,16 @@ class DraftMailerWindow:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Outlook Draft Mailer")
-        self.root.geometry("1200x960")
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        window_width = min(1100, screen_width - 80)
+        window_height = min(760, screen_height - 100)
+        window_x = max(0, (screen_width - window_width) // 2)
+        window_y = max(0, (screen_height - window_height) // 2)
+        self.root.geometry(
+            f"{window_width}x{window_height}+{window_x}+{window_y}"
+        )
+        self.root.minsize(min(800, window_width), min(600, window_height))
         self.input_path = tk.StringVar()
         self.recipient_column = tk.StringVar()
         self.contacts: list[dict[str, str]] = []
@@ -62,10 +71,10 @@ class DraftMailerWindow:
         self.logger.info("Outlook Draft Mailer started.")
 
     def _build_window(self) -> None:
-        main = ttk.Frame(self.root, padding=16)
+        main = ttk.Frame(self.root, padding=10)
         main.pack(fill="both", expand=True)
         main.columnconfigure(0, weight=1)
-        main.rowconfigure(4, weight=4, minsize=300)
+        main.rowconfigure(4, weight=2, minsize=120)
         main.rowconfigure(9, weight=1)
         main.rowconfigure(11, weight=0)
 
@@ -114,7 +123,7 @@ class DraftMailerWindow:
             table_frame,
             show="headings",
             selectmode="browse",
-            height=16,
+            height=8,
         )
         self.contact_table.grid(row=0, column=0, sticky="nsew")
         self.contact_table.bind("<Button-1>", self._toggle_row)
@@ -152,7 +161,7 @@ class DraftMailerWindow:
         columns_row = ttk.Frame(main)
         columns_row.grid(row=7, column=0, sticky="ew", pady=(4, 12))
         columns_row.columnconfigure(0, weight=1)
-        self.column_list = tk.Listbox(columns_row, height=5, exportselection=False)
+        self.column_list = tk.Listbox(columns_row, height=3, exportselection=False)
         self.column_list.grid(row=0, column=0, sticky="ew")
         self.column_list.bind("<Double-Button-1>", self._insert_placeholder)
         ttk.Button(
@@ -172,7 +181,7 @@ class DraftMailerWindow:
         body_frame.grid(row=9, column=0, sticky="nsew")
         body_frame.rowconfigure(0, weight=1)
         body_frame.columnconfigure(0, weight=1)
-        self.body_text = tk.Text(body_frame, height=10, wrap="word")
+        self.body_text = tk.Text(body_frame, height=5, wrap="word")
         self.body_text.grid(row=0, column=0, sticky="nsew")
         self.body_text.bind("<FocusIn>", self._remember_editor)
         self.body_text.bind("<KeyRelease>", self._highlight_placeholders)
@@ -210,7 +219,7 @@ class DraftMailerWindow:
         log_frame.grid(row=11, column=0, sticky="nsew", pady=(12, 0))
         log_frame.rowconfigure(0, weight=1)
         log_frame.columnconfigure(0, weight=1)
-        self.log_text = tk.Text(log_frame, height=7, wrap="word", state="disabled")
+        self.log_text = tk.Text(log_frame, height=4, wrap="word", state="disabled")
         self.log_text.grid(row=0, column=0, sticky="nsew")
         log_scrollbar = ttk.Scrollbar(
             log_frame, orient="vertical", command=self.log_text.yview
