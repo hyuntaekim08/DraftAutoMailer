@@ -1,5 +1,6 @@
 import os
 import logging
+import re
 import sys
 import tkinter as tk
 from pathlib import Path
@@ -47,6 +48,7 @@ class DraftMailerWindow:
         self.active_editor: ttk.Entry | tk.Text | None = None
         self.outlook_signature: OutlookSignature | None = None
         self.log_visible = False
+        self.geometry_before_log: tuple[int, int, int, int] | None = None
 
         self._build_window()
         if getattr(sys, "frozen", False):
@@ -173,6 +175,12 @@ class DraftMailerWindow:
         self.body_text = tk.Text(body_frame, height=10, wrap="word")
         self.body_text.grid(row=0, column=0, sticky="nsew")
         self.body_text.bind("<FocusIn>", self._remember_editor)
+        self.body_text.bind("<KeyRelease>", self._highlight_placeholders)
+        self.body_text.tag_configure(
+            "placeholder",
+            foreground="#0759A5",
+            background="#E5F1FF",
+        )
         self.active_editor = self.body_text
         ttk.Button(
             body_frame,
@@ -219,13 +227,40 @@ class DraftMailerWindow:
     def _toggle_log_panel(self) -> None:
         self.log_visible = not self.log_visible
         if self.log_visible:
+            self.root.update_idletasks()
+            self.geometry_before_log = (
+                self.root.winfo_width(),
+                self.root.winfo_height(),
+                self.root.winfo_x(),
+                self.root.winfo_y(),
+            )
             self.log_frame.grid()
             self.log_toggle_button.config(text="Hide log")
             self.log_frame.master.rowconfigure(11, weight=1)
+            screen_height = self.root.winfo_screenheight()
+            expanded_height = min(
+                self.geometry_before_log[1] + 220,
+                screen_height - 80,
+            )
+            expanded_y = max(
+                0,
+                min(
+                    self.geometry_before_log[3],
+                    screen_height - expanded_height - 80,
+                ),
+            )
+            self.root.geometry(
+                f"{self.geometry_before_log[0]}x{expanded_height}"
+                f"+{self.geometry_before_log[2]}+{expanded_y}"
+            )
         else:
             self.log_frame.grid_remove()
             self.log_toggle_button.config(text="Show log")
             self.log_frame.master.rowconfigure(11, weight=0)
+            if self.geometry_before_log is not None:
+                width, height, x, y = self.geometry_before_log
+                self.root.geometry(f"{width}x{height}+{x}+{y}")
+                self.geometry_before_log = None
 
     def _clear_log_display(self) -> None:
         self.log_text.configure(state="normal")
@@ -348,7 +383,16 @@ class DraftMailerWindow:
             self.subject_entry.focus_set()
         else:
             self.body_text.insert(tk.INSERT, placeholder)
+            self._highlight_placeholders()
             self.body_text.focus_set()
+
+    def _highlight_placeholders(self, _event: tk.Event | None = None) -> None:
+        self.body_text.tag_remove("placeholder", "1.0", "end")
+        body = self.body_text.get("1.0", "end-1c")
+        for match in re.finditer(r"\{[^{}\r\n]+\}", body):
+            start = f"1.0+{match.start()}c"
+            end = f"1.0+{match.end()}c"
+            self.body_text.tag_add("placeholder", start, end)
 
     def _add_outlook_signature(self) -> None:
         try:

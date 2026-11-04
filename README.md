@@ -40,7 +40,8 @@ In the window:
    a draft. Use **Select all** or **Clear selection** if helpful.
 4. Enter a subject and body. Use column names inside braces, for example
    `{mail}` or `{name}`. You can also select a column and insert its placeholder
-   at the cursor. Click **Add Outlook signature** to include the default
+   at the cursor. Placeholders in the body editor are highlighted in blue.
+   Click **Add Outlook signature** to include the default
    signature configured in classic Outlook for new messages. The signature is
    inserted into the saved draft as HTML, preserving its formatting, colors,
    links, and local signature images.
