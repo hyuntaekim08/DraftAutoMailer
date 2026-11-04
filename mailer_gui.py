@@ -7,7 +7,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from create_drafts import (
     BASE_DIR,
-    append_signature,
+    OutlookSignature,
     create_draft,
     configure_logging,
     get_default_outlook_signature,
@@ -45,6 +45,7 @@ class DraftMailerWindow:
         self.columns: list[str] = []
         self.checked_rows: set[int] = set()
         self.active_editor: ttk.Entry | tk.Text | None = None
+        self.outlook_signature: OutlookSignature | None = None
 
         self._build_window()
         if getattr(sys, "frozen", False):
@@ -326,22 +327,18 @@ class DraftMailerWindow:
 
     def _add_outlook_signature(self) -> None:
         try:
-            signature = get_default_outlook_signature()
+            self.outlook_signature = get_default_outlook_signature()
         except (OSError, RuntimeError) as error:
             self.logger.exception("Could not load the default Outlook signature.")
             messagebox.showerror("Could not load Outlook signature", str(error))
             return
 
-        body = self.body_text.get("1.0", "end-1c")
-        if signature and body.rstrip().endswith(signature):
-            self.logger.info("The Outlook signature is already at the end of the body.")
-            return
-
-        self.body_text.delete("1.0", "end")
-        self.body_text.insert("1.0", append_signature(body, signature))
-        self.body_text.focus_set()
-        self.body_text.mark_set(tk.INSERT, "end-1c")
-        self.logger.info("Added the default Outlook signature to the message body.")
+        self.status_label.config(
+            text="The formatted Outlook signature will be included in created drafts."
+        )
+        self.logger.info(
+            "Loaded the Outlook signature; original formatting and images will be retained."
+        )
 
     def _remember_editor(self, event: tk.Event) -> None:
         self.active_editor = event.widget
@@ -357,12 +354,16 @@ class DraftMailerWindow:
         subject = self.subject_entry.get()
         body = self.body_text.get("1.0", "end-1c")
         selected_contacts = select_contacts(self.contacts, self.checked_rows)
-        return render_messages(
+        messages = render_messages(
             selected_contacts,
             subject,
             body,
             recipient_column,
         )
+        if self.outlook_signature is not None:
+            for message in messages:
+                message["outlookSignature"] = self.outlook_signature
+        return messages
 
     def _preview(self) -> None:
         try:

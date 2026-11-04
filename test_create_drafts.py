@@ -4,29 +4,16 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from create_drafts import (
-    append_signature,
     configure_logging,
     create_draft,
     get_default_outlook_signature,
     load_contacts,
+    OutlookSignature,
+    prepare_outlook_html_body,
     render_drafts,
     render_messages,
     select_contacts,
 )
-
-
-class AppendSignatureTests(unittest.TestCase):
-    def test_appends_signature_after_body_with_blank_line(self) -> None:
-        self.assertEqual(
-            append_signature("Hello Alex.\n", "Best,\nYour Name"),
-            "Hello Alex.\n\nBest,\nYour Name",
-        )
-
-    def test_leaves_body_unchanged_when_signature_is_empty(self) -> None:
-        self.assertEqual(append_signature("Hello Alex.\n", " \n "), "Hello Alex.\n")
-
-    def test_returns_signature_when_body_is_empty(self) -> None:
-        self.assertEqual(append_signature(" \n ", "Best,\nYour Name"), "Best,\nYour Name")
 
 
 class OutlookSignatureTests(unittest.TestCase):
@@ -50,7 +37,8 @@ class OutlookSignatureTests(unittest.TestCase):
             ):
                 signature = get_default_outlook_signature()
 
-        self.assertEqual(signature, "Best,\nAlex")
+        self.assertIn("Best,", signature.markup)
+        self.assertEqual(signature.directory, Path(directory) / "Microsoft" / "Signatures")
         query_value.assert_called_once()
 
     @patch("create_drafts.winreg.QueryValueEx", side_effect=FileNotFoundError)
@@ -72,7 +60,7 @@ class OutlookSignatureTests(unittest.TestCase):
             ):
                 signature = get_default_outlook_signature()
 
-        self.assertEqual(signature, "Best,\nAlex")
+        self.assertIn("Best,", signature.markup)
         query_value.assert_called()
 
     @patch("create_drafts.winreg.QueryValueEx", return_value=("Work", 1))
@@ -94,7 +82,51 @@ class OutlookSignatureTests(unittest.TestCase):
             ):
                 signature = get_default_outlook_signature()
 
-        self.assertEqual(signature, "Best,\nAlex")
+        self.assertIn("Best,", signature.markup)
+
+    @patch("create_drafts.winreg.QueryValueEx", return_value=("Work", 1))
+    @patch("create_drafts.winreg.OpenKey")
+    def test_reads_legacy_windows_encoded_html_signature(
+        self,
+        open_key: Mock,
+        query_value: Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            signature_dir = Path(directory) / "Microsoft" / "Signatures"
+            signature_dir.mkdir(parents=True)
+            (signature_dir / "Work.htm").write_bytes(
+                '<html><body>André</body></html>'.encode("cp1252")
+            )
+            with patch.dict(
+                "create_drafts.os.environ",
+                {"APPDATA": str(Path(directory))},
+            ):
+                signature = get_default_outlook_signature()
+
+        self.assertIn("André", signature.markup)
+
+    def test_prepares_html_signature_and_embeds_local_images(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            signature_dir = Path(directory)
+            image_dir = signature_dir / "Work_files"
+            image_dir.mkdir()
+            image_path = image_dir / "logo.png"
+            image_path.write_bytes(b"image")
+            signature = OutlookSignature(
+                '<html><head><style>.name { color: #123456; }</style></head>'
+                '<body><span class="name">Alex</span>'
+                '<img src="Work_files/logo.png"></body></html>',
+                signature_dir,
+            )
+
+            body, resources = prepare_outlook_html_body("Hello Alex.", signature)
+
+        self.assertIn("color: #123456", body)
+        self.assertIn("<span class=\"name\">Alex</span>", body)
+        self.assertIn("Hello Alex.", body)
+        self.assertEqual(len(resources), 1)
+        self.assertEqual(resources[0][0], image_path.resolve())
+        self.assertIn(f"cid:{resources[0][1]}", body)
 
     @patch("create_drafts.winreg.QueryValueEx", side_effect=FileNotFoundError)
     @patch("create_drafts.winreg.OpenKey")
@@ -314,6 +346,40 @@ class RenderDraftsTests(unittest.TestCase):
         self.assertEqual(outlook_message.Body, "Welcome.")
         outlook_message.Save.assert_called_once_with()
         outlook_message.Send.assert_not_called()
+
+    @patch("win32com.client.Dispatch")
+    def test_saves_signature_as_formatted_html_with_inline_image(
+        self,
+        dispatch: Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            signature_dir = Path(directory)
+            image_path = signature_dir / "logo.png"
+            image_path.write_bytes(b"image")
+            outlook_message = dispatch.return_value.CreateItem.return_value
+            outlook_message.EntryID = "draft-id"
+            message = {
+                "subject": "Hello Alex",
+                "body": {"contentType": "Text", "content": "Welcome."},
+                "toRecipients": [
+                    {"emailAddress": {"address": "alex@example.com"}},
+                ],
+                "outlookSignature": OutlookSignature(
+                    '<html><body><span style="color: red">Best, Alex</span>'
+                    '<img src="logo.png"></body></html>',
+                    signature_dir,
+                ),
+            }
+
+            draft_id = create_draft(message)
+
+        self.assertEqual(draft_id, "draft-id")
+        self.assertIn("color: red", outlook_message.HTMLBody)
+        self.assertIn("Welcome.", outlook_message.HTMLBody)
+        outlook_message.Attachments.Add.assert_called_once_with(str(image_path.resolve()), 1)
+        attachment = outlook_message.Attachments.Add.return_value
+        self.assertEqual(attachment.PropertyAccessor.SetProperty.call_count, 2)
+        outlook_message.Save.assert_called_once_with()
 
 
 if __name__ == "__main__":

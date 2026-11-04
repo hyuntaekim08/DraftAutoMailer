@@ -4,13 +4,22 @@ import html
 import logging
 import os
 import re
+import uuid
 import winreg
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote, urlsplit
 
 
 BASE_DIR = Path(__file__).resolve().parent
 LOGGER = logging.getLogger("outlook_draft_mailer")
+
+
+@dataclass(frozen=True)
+class OutlookSignature:
+    markup: str
+    directory: Path
 
 
 def _column_name(index: int) -> str:
@@ -147,25 +156,19 @@ def render_messages(
     return messages
 
 
-def append_signature(body: str, signature: str) -> str:
-    signature = signature.strip()
-    if not signature:
-        return body
-    if not body.strip():
-        return signature
-    return f"{body.rstrip()}\n\n{signature}"
-
-
 def _read_signature_file(path: Path) -> str:
     content = path.read_bytes()
     if content.startswith((b"\xff\xfe", b"\xfe\xff")):
         text = content.decode("utf-16")
     else:
-        text = content.decode("utf-8-sig")
+        try:
+            text = content.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            text = content.decode("cp1252")
     return text.replace("\r\n", "\n").replace("\r", "\n").strip()
 
 
-def get_default_outlook_signature() -> str:
+def get_default_outlook_signature() -> OutlookSignature:
     signature_name = ""
     for version in ("16.0", "15.0", "14.0", "12.0"):
         key_path = rf"Software\Microsoft\Office\{version}\Common\MailSettings"
@@ -199,21 +202,113 @@ def get_default_outlook_signature() -> str:
                 "messages in classic Outlook, then try again."
             )
 
-    text_path = signature_dir / f"{signature_name}.txt"
-    if text_path.is_file():
-        return _read_signature_file(text_path)
-
     html_path = signature_dir / f"{signature_name}.htm"
     if html_path.is_file():
-        markup = _read_signature_file(html_path)
-        markup = re.sub(r"<(br|/p|/div|/tr|/li)\b[^>]*>", "\n", markup, flags=re.I)
-        markup = re.sub(r"<[^>]+>", "", markup)
-        return html.unescape(markup).strip()
+        return OutlookSignature(_read_signature_file(html_path), signature_dir)
+
+    text_path = signature_dir / f"{signature_name}.txt"
+    if text_path.is_file():
+        text = _read_signature_file(text_path)
+        markup = f"<div>{html.escape(text).replace(chr(10), '<br>')}</div>"
+        return OutlookSignature(markup, signature_dir)
 
     raise RuntimeError(
         f"Could not find the Outlook signature file for {signature_name!r} "
         f"in {signature_dir}."
     )
+
+
+def _signature_resource_path(reference: str, signature_dir: Path) -> Path | None:
+    reference = html.unescape(unquote(reference.strip())).replace("\\", "/")
+    if re.match(r"^[A-Za-z]:/", reference):
+        path = Path(reference)
+        resource_name = ""
+    else:
+        parsed = urlsplit(reference)
+        if parsed.scheme and parsed.scheme.lower() != "file":
+            return None
+        resource_name = parsed.path if parsed.scheme.lower() == "file" else reference
+        path = Path(resource_name)
+
+    if not resource_name or resource_name.startswith("//"):
+        if not path.is_absolute():
+            return None
+
+    if not path.is_absolute():
+        path = signature_dir / path
+    try:
+        resolved = path.resolve(strict=True)
+        resolved.relative_to(signature_dir.resolve())
+    except (OSError, ValueError):
+        return None
+    return resolved if resolved.is_file() else None
+
+
+def prepare_outlook_html_body(
+    body: str,
+    signature: OutlookSignature,
+) -> tuple[str, list[tuple[Path, str]]]:
+    body_markup = (
+        '<div style="font-family:Calibri,Arial,sans-serif;font-size:11pt">'
+        f"{html.escape(body).replace(chr(10), '<br>')}"
+        "</div><br>"
+    )
+    signature_markup = signature.markup
+    resources: dict[Path, str] = {}
+
+    def content_id_for(reference: str) -> str | None:
+        path = _signature_resource_path(reference, signature.directory)
+        if path is None:
+            return None
+        if path not in resources:
+            resources[path] = f"{uuid.uuid4().hex}@outlook-draft-mailer"
+        return resources[path]
+
+    def replace_attribute(match: re.Match[str]) -> str:
+        content_id = content_id_for(match.group(3))
+        if content_id is None:
+            return match.group(0)
+        return f'{match.group(1)}={match.group(2)}cid:{content_id}{match.group(2)}'
+
+    signature_markup = re.sub(
+        r"""(?is)\b(src|background|poster)\s*=\s*(["'])(.*?)\2""",
+        replace_attribute,
+        signature_markup,
+    )
+
+    def replace_css_url(match: re.Match[str]) -> str:
+        content_id = content_id_for(match.group(2))
+        if content_id is None:
+            return match.group(0)
+        return f'url("cid:{content_id}")'
+
+    signature_markup = re.sub(
+        r"""(?is)url\(\s*(["']?)([^"')]+)\1\s*\)""",
+        replace_css_url,
+        signature_markup,
+    )
+
+    body_opening = re.search(r"<body\b[^>]*>", signature_markup, flags=re.I)
+    if body_opening:
+        insert_at = body_opening.end()
+        html_body = (
+            signature_markup[:insert_at]
+            + body_markup
+            + signature_markup[insert_at:]
+        )
+    else:
+        html_opening = re.search(r"<html\b[^>]*>", signature_markup, flags=re.I)
+        if html_opening:
+            insert_at = html_opening.end()
+            html_body = (
+                signature_markup[:insert_at]
+                + f"<body>{body_markup}"
+                + signature_markup[insert_at:]
+            )
+        else:
+            html_body = f"<html><body>{body_markup}{signature_markup}</body></html>"
+
+    return html_body, [(path, content_id) for path, content_id in resources.items()]
 
 
 def select_contacts(
@@ -253,7 +348,25 @@ def create_draft(message: dict[str, object]) -> str:
         outlook_message = outlook.CreateItem(0)
         outlook_message.To = message["toRecipients"][0]["emailAddress"]["address"]
         outlook_message.Subject = message["subject"]
-        outlook_message.Body = message["body"]["content"]
+        signature = message.get("outlookSignature")
+        if isinstance(signature, OutlookSignature):
+            html_body, resources = prepare_outlook_html_body(
+                message["body"]["content"],
+                signature,
+            )
+            outlook_message.HTMLBody = html_body
+            for path, content_id in resources:
+                attachment = outlook_message.Attachments.Add(str(path), 1)
+                attachment.PropertyAccessor.SetProperty(
+                    "http://schemas.microsoft.com/mapi/proptag/0x3712001F",
+                    content_id,
+                )
+                attachment.PropertyAccessor.SetProperty(
+                    "http://schemas.microsoft.com/mapi/proptag/0x7FFE000B",
+                    True,
+                )
+        else:
+            outlook_message.Body = message["body"]["content"]
         outlook_message.Save()
         draft_id = outlook_message.EntryID
     except pywintypes.com_error as error:
