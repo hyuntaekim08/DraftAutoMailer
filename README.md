@@ -40,7 +40,10 @@ In the window:
    a draft. Use **Select all** or **Clear selection** if helpful.
 4. Enter a subject and body. Use column names inside braces, for example
    `{mail}` or `{name}`. You can also select a column and insert its placeholder
-   at the cursor.
+   at the cursor. Click **Add Outlook signature** to append the default
+   signature configured in classic Outlook for new messages. The body editor
+   uses plain text, so formatting and images from the Outlook signature are
+   not retained.
 5. Preview the first checked contact, then choose **Create Outlook drafts**.
    The program creates one draft for each checked row and does not send them.
 

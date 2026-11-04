@@ -4,13 +4,118 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from create_drafts import (
+    append_signature,
     configure_logging,
     create_draft,
+    get_default_outlook_signature,
     load_contacts,
     render_drafts,
     render_messages,
     select_contacts,
 )
+
+
+class AppendSignatureTests(unittest.TestCase):
+    def test_appends_signature_after_body_with_blank_line(self) -> None:
+        self.assertEqual(
+            append_signature("Hello Alex.\n", "Best,\nYour Name"),
+            "Hello Alex.\n\nBest,\nYour Name",
+        )
+
+    def test_leaves_body_unchanged_when_signature_is_empty(self) -> None:
+        self.assertEqual(append_signature("Hello Alex.\n", " \n "), "Hello Alex.\n")
+
+    def test_returns_signature_when_body_is_empty(self) -> None:
+        self.assertEqual(append_signature(" \n ", "Best,\nYour Name"), "Best,\nYour Name")
+
+
+class OutlookSignatureTests(unittest.TestCase):
+    @patch("create_drafts.os.environ", {"APPDATA": "C:\\Users\\test\\AppData\\Roaming"})
+    @patch("create_drafts.winreg.QueryValueEx", return_value=("Work", 1))
+    @patch("create_drafts.winreg.OpenKey")
+    def test_reads_default_signature_text_file(
+        self,
+        open_key: Mock,
+        query_value: Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            signature_dir = Path(directory) / "Microsoft" / "Signatures"
+            signature_dir.mkdir(parents=True)
+            (signature_dir / "Work.txt").write_text(
+                "Best,\nAlex", encoding="utf-8"
+            )
+            with patch.dict(
+                "create_drafts.os.environ",
+                {"APPDATA": str(Path(directory))},
+            ):
+                signature = get_default_outlook_signature()
+
+        self.assertEqual(signature, "Best,\nAlex")
+        query_value.assert_called_once()
+
+    @patch("create_drafts.winreg.QueryValueEx", side_effect=FileNotFoundError)
+    @patch("create_drafts.winreg.OpenKey")
+    def test_uses_only_local_signature_when_no_default_is_configured(
+        self,
+        open_key: Mock,
+        query_value: Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            signature_dir = Path(directory) / "Microsoft" / "Signatures"
+            signature_dir.mkdir(parents=True)
+            (signature_dir / "Work.txt").write_text(
+                "Best,\nAlex", encoding="utf-8"
+            )
+            with patch.dict(
+                "create_drafts.os.environ",
+                {"APPDATA": str(Path(directory))},
+            ):
+                signature = get_default_outlook_signature()
+
+        self.assertEqual(signature, "Best,\nAlex")
+        query_value.assert_called()
+
+    @patch("create_drafts.winreg.QueryValueEx", return_value=("Work", 1))
+    @patch("create_drafts.winreg.OpenKey")
+    def test_reads_utf16_outlook_signature_file(
+        self,
+        open_key: Mock,
+        query_value: Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            signature_dir = Path(directory) / "Microsoft" / "Signatures"
+            signature_dir.mkdir(parents=True)
+            (signature_dir / "Work.txt").write_text(
+                "Best,\nAlex", encoding="utf-16"
+            )
+            with patch.dict(
+                "create_drafts.os.environ",
+                {"APPDATA": str(Path(directory))},
+            ):
+                signature = get_default_outlook_signature()
+
+        self.assertEqual(signature, "Best,\nAlex")
+
+    @patch("create_drafts.winreg.QueryValueEx", side_effect=FileNotFoundError)
+    @patch("create_drafts.winreg.OpenKey")
+    def test_requires_default_when_multiple_local_signatures_exist(
+        self,
+        open_key: Mock,
+        query_value: Mock,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            signature_dir = Path(directory) / "Microsoft" / "Signatures"
+            signature_dir.mkdir(parents=True)
+            (signature_dir / "Work.txt").write_text("Work", encoding="utf-8")
+            (signature_dir / "Personal.htm").write_text(
+                "<p>Personal</p>", encoding="utf-8"
+            )
+            with patch.dict(
+                "create_drafts.os.environ",
+                {"APPDATA": str(Path(directory))},
+            ):
+                with self.assertRaisesRegex(RuntimeError, "multiple signatures"):
+                    get_default_outlook_signature()
 
 
 class RenderDraftsTests(unittest.TestCase):

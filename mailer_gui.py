@@ -7,8 +7,10 @@ from tkinter import filedialog, messagebox, ttk
 
 from create_drafts import (
     BASE_DIR,
+    append_signature,
     create_draft,
     configure_logging,
+    get_default_outlook_signature,
     load_contacts,
     render_messages,
     select_contacts,
@@ -61,7 +63,7 @@ class DraftMailerWindow:
         main.columnconfigure(0, weight=1)
         main.rowconfigure(4, weight=2)
         main.rowconfigure(9, weight=1)
-        main.rowconfigure(11, weight=1)
+        main.rowconfigure(12, weight=1)
 
         ttk.Label(
             main,
@@ -165,6 +167,11 @@ class DraftMailerWindow:
         self.body_text.grid(row=0, column=0, sticky="nsew")
         self.body_text.bind("<FocusIn>", self._remember_editor)
         self.active_editor = self.body_text
+        ttk.Button(
+            body_frame,
+            text="Add Outlook signature",
+            command=self._add_outlook_signature,
+        ).grid(row=1, column=0, sticky="e", pady=(6, 0))
 
         action_row = ttk.Frame(main)
         action_row.grid(row=10, column=0, sticky="ew", pady=(12, 0))
@@ -316,6 +323,25 @@ class DraftMailerWindow:
         else:
             self.body_text.insert(tk.INSERT, placeholder)
             self.body_text.focus_set()
+
+    def _add_outlook_signature(self) -> None:
+        try:
+            signature = get_default_outlook_signature()
+        except (OSError, RuntimeError) as error:
+            self.logger.exception("Could not load the default Outlook signature.")
+            messagebox.showerror("Could not load Outlook signature", str(error))
+            return
+
+        body = self.body_text.get("1.0", "end-1c")
+        if signature and body.rstrip().endswith(signature):
+            self.logger.info("The Outlook signature is already at the end of the body.")
+            return
+
+        self.body_text.delete("1.0", "end")
+        self.body_text.insert("1.0", append_signature(body, signature))
+        self.body_text.focus_set()
+        self.body_text.mark_set(tk.INSERT, "end-1c")
+        self.logger.info("Added the default Outlook signature to the message body.")
 
     def _remember_editor(self, event: tk.Event) -> None:
         self.active_editor = event.widget

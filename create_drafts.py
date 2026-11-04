@@ -1,6 +1,10 @@
 import argparse
 import csv
+import html
 import logging
+import os
+import re
+import winreg
 from pathlib import Path
 from typing import Any
 
@@ -141,6 +145,75 @@ def render_messages(
             }
         )
     return messages
+
+
+def append_signature(body: str, signature: str) -> str:
+    signature = signature.strip()
+    if not signature:
+        return body
+    if not body.strip():
+        return signature
+    return f"{body.rstrip()}\n\n{signature}"
+
+
+def _read_signature_file(path: Path) -> str:
+    content = path.read_bytes()
+    if content.startswith((b"\xff\xfe", b"\xfe\xff")):
+        text = content.decode("utf-16")
+    else:
+        text = content.decode("utf-8-sig")
+    return text.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def get_default_outlook_signature() -> str:
+    signature_name = ""
+    for version in ("16.0", "15.0", "14.0", "12.0"):
+        key_path = rf"Software\Microsoft\Office\{version}\Common\MailSettings"
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+                signature_name, _ = winreg.QueryValueEx(key, "NewSignature")
+                if signature_name:
+                    break
+        except FileNotFoundError:
+            continue
+
+    signature_dir = Path(os.environ["APPDATA"]) / "Microsoft" / "Signatures"
+    if not signature_name:
+        available_signatures = {
+            path.stem
+            for pattern in ("*.txt", "*.htm")
+            for path in signature_dir.glob(pattern)
+        }
+        if len(available_signatures) == 1:
+            signature_name = available_signatures.pop()
+        elif available_signatures:
+            raise RuntimeError(
+                "No default Outlook signature is configured, and multiple "
+                "signatures were found. Set a default signature for new messages "
+                "in classic Outlook, then try again."
+            )
+        else:
+            raise RuntimeError(
+                "No default Outlook signature is configured and no local "
+                "signature files were found. Set a default signature for new "
+                "messages in classic Outlook, then try again."
+            )
+
+    text_path = signature_dir / f"{signature_name}.txt"
+    if text_path.is_file():
+        return _read_signature_file(text_path)
+
+    html_path = signature_dir / f"{signature_name}.htm"
+    if html_path.is_file():
+        markup = _read_signature_file(html_path)
+        markup = re.sub(r"<(br|/p|/div|/tr|/li)\b[^>]*>", "\n", markup, flags=re.I)
+        markup = re.sub(r"<[^>]+>", "", markup)
+        return html.unescape(markup).strip()
+
+    raise RuntimeError(
+        f"Could not find the Outlook signature file for {signature_name!r} "
+        f"in {signature_dir}."
+    )
 
 
 def select_contacts(
